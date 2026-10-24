@@ -23,22 +23,26 @@ mod tools;
 /// '<json>'` runs one. For any AI that has a shell — no setup, nothing running,
 /// no tool descriptions loaded until it actually asks.
 pub fn list_tools(json_out: bool) {
+    // writeln!, not println!: `siddran tools | head` closes the pipe early, and
+    // println! panics on that. A reader that has seen enough is not an error.
+    let mut out = std::io::stdout().lock();
     let defs = tools::definitions();
     if json_out {
-        println!("{}", serde_json::to_string_pretty(&defs).unwrap_or_default());
+        let _ = writeln!(out, "{}", serde_json::to_string_pretty(&defs).unwrap_or_default());
         return;
     }
-    println!("{INSTRUCTIONS}\n");
-    println!("Run one with: siddran call <tool> '<json arguments>'   (or pipe the JSON on stdin)");
-    println!("Full argument schemas: siddran tools --json\n");
+    let _ = writeln!(out, "{INSTRUCTIONS}\n");
+    let _ = writeln!(out, "Run one with: siddran call <tool> '<json arguments>'   (or pipe the JSON on stdin)");
+    let _ = writeln!(out, "Full argument schemas: siddran tools --json\n");
     for t in defs.as_array().into_iter().flatten() {
         let props = t["inputSchema"]["properties"].as_object();
         let req: Vec<&str> = t["inputSchema"]["required"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
         let args: Vec<String> = props
             .map(|p| p.keys().map(|k| if req.contains(&k.as_str()) { k.clone() } else { format!("{k}?") }).collect())
             .unwrap_or_default();
-        println!("{}  {{{}}}", t["name"].as_str().unwrap_or(""), args.join(", "));
-        println!("    {}\n", t["description"].as_str().unwrap_or(""));
+        if writeln!(out, "{}  {{{}}}\n    {}\n", t["name"].as_str().unwrap_or(""), args.join(", "), t["description"].as_str().unwrap_or("")).is_err() {
+            return;
+        }
     }
 }
 

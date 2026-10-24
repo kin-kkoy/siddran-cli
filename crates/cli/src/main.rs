@@ -181,7 +181,8 @@ fn main() -> ExitCode {
         };
         return match mcp::call_tool(&root, &tool, &args) {
             Ok(out) => {
-                println!("{out}");
+                use std::io::Write;
+                let _ = writeln!(std::io::stdout(), "{out}"); // see list_tools: a closed pipe is fine
                 ExitCode::SUCCESS
             }
             Err(e) => {
