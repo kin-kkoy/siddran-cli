@@ -1,0 +1,15 @@
+[package]
+name = "siddran-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bag format and domain logic for Siddran — no terminal, no CLI."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+
+[dev-dependencies]
+tempfile = "3"

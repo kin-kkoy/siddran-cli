@@ -1,0 +1,112 @@
+{
+  "tasks": [
+    {
+      "id": 1625,
+      "title": "Legacy numeric row",
+      "description": "no due_all_day key at all",
+      "priority": "high",
+      "due_date": null,
+      "is_completed": true,
+      "created_at": "2026-07-14T16:29:42.835Z",
+      "updated_at": "2026-08-11T07:34:47.629Z"
+    },
+    {
+      "id": 1626,
+      "title": "Legacy, date-only deadline",
+      "description": null,
+      "priority": "normal",
+      "due_date": "2026-08-23T01:00:00.000Z",
+      "is_completed": false,
+      "created_at": "2026-07-14T16:30:00.000Z",
+      "updated_at": "2026-08-11T07:34:47.629Z"
+    },
+    {
+      "id": "6d5bc24a-b21b-4b9e-a972-97f7e6cce82f",
+      "title": "Modern uuid row",
+      "description": "",
+      "priority": "low",
+      "due_date": "2026-09-20T06:00:00.000Z",
+      "due_all_day": false,
+      "remind_at": null,
+      "is_completed": false,
+      "order": 0,
+      "created_at": "2026-08-25T09:11:44.745Z",
+      "updated_at": "2026-08-25T09:11:44.745Z"
+    },
+    {
+      "id": "94c3f800-5740-40eb-a900-13b37fb42bb9",
+      "title": "Unicode ✓ and \"quotes\" and \\\\ backslash\ttab",
+      "description": "newline\nhere",
+      "priority": "normal",
+      "due_date": null,
+      "is_completed": false,
+      "created_at": "2026-08-25T09:12:00.000Z",
+      "updated_at": "2026-08-25T09:12:00.000Z"
+    }
+  ],
+  "dailies": [
+    {
+      "id": "03efa22a-6cac-4b9a-be6d-69d5cefd34bf",
+      "title": "Ephemeral daily",
+      "priority": "normal",
+      "is_completed": false,
+      "created_at": "2026-08-25T09:11:44.745Z",
+      "updated_at": "2026-08-25T09:11:44.745Z",
+      "expires_at": "2026-08-25T15:59:59.999Z",
+      "recurrence": null,
+      "time": null
+    },
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "title": "Recurring, day mask",
+      "priority": "high",
+      "is_completed": false,
+      "created_at": "2026-08-25T09:11:44.745Z",
+      "updated_at": "2026-08-25T09:11:44.745Z",
+      "expires_at": "2026-08-25T15:59:59.999Z",
+      "recurrence": "{\"mask\":[false,true,true,true,true,true,false]}",
+      "time": "07:30"
+    }
+  ],
+  "completions": [
+    {
+      "daily_task_id": "11111111-2222-3333-4444-555555555555",
+      "date": "2026-08-31"
+    },
+    {
+      "daily_task_id": "11111111-2222-3333-4444-555555555555",
+      "date": "2026-09-01"
+    }
+  ],
+  "projects": [
+    {
+      "id": "3b3bf0ab-b925-4838-84e7-44605ddbf26e",
+      "title": "A bundle",
+      "priority": "normal",
+      "is_completed": false,
+      "color": "hsl(120, 70%, 50%)",
+      "created_at": "2026-08-25T09:38:38.167Z",
+      "updated_at": "2026-08-25T09:38:38.167Z",
+      "tasks": [
+        {
+          "id": "93267df7-5c74-4a42-adda-eddd8413a5dc",
+          "project_id": "3b3bf0ab-b925-4838-84e7-44605ddbf26e",
+          "title": "Subtask two",
+          "priority": "normal",
+          "is_completed": false,
+          "created_at": "2026-08-25T09:38:38.167Z",
+          "updated_at": "2026-08-25T09:38:38.167Z"
+        },
+        {
+          "id": "de9c9274-83ff-451d-932a-47c893e7092c",
+          "project_id": "3b3bf0ab-b925-4838-84e7-44605ddbf26e",
+          "title": "Subtask one",
+          "priority": "high",
+          "is_completed": true,
+          "created_at": "2026-08-25T09:38:39.000Z",
+          "updated_at": "2026-08-25T09:38:39.000Z"
+        }
+      ]
+    }
+  ]
+}

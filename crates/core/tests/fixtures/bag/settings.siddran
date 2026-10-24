@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "theme": "default",
+    "matchMode": true,
+    "contrast": "low",
+    "showStars": false,
+    "starSize": 1.4,
+    "starDriftSpeed": 3.9,
+    "starTwinkleDepth": 1.65,
+    "starCount": 100,
+    "starDirection": "↙",
+    "noteEditorWidth": 1200,
+    "bgBrightness": 0,
+    "emptyObj": {},
+    "emptyArr": []
+  }
+}
