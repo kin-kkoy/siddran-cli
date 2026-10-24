@@ -323,7 +323,10 @@ $ siddran bag check
 
 ## What is deliberately not here
 
-- **The Sandbox canvas.** `sandboxes/*.siddran` is never parsed or touched.
+- **The Sandbox canvas in the TUI.** Boards are not shown in the terminal. The AI tools do read
+  and write them (`sandbox_read`, `sandbox_diagram`, `sandbox_edit`): shapes, text and
+  connectors are understood; everything else on a board (handwriting, PDFs, cards) is carried
+  through untouched.
 - **Cloud sync.** The desktop's Cloudflare Worker covers tasks and calendar; this edits the same
   Bag, so it inherits sync without implementing any of it.
 - **The Ember API.** Irrelevant — there is no server in this design.

@@ -8,7 +8,7 @@ Bag folder. So the governing rule is:
 
 Not "equivalent JSON" — identical bytes. If the two disagree, opening a Bag in one app rewrites
 files for the other, every save produces spurious diffs, and `reconcileNotes` (the only
-destructive code in either app) starts operating on state it did not expect.
+code in either app that deletes files on its own) starts operating on state it did not expect.
 
 ## How it is enforced
 
@@ -79,10 +79,13 @@ check injected the wrong bug and passed, which is why the guard exists.
 
 ## Writing: targeted operations, not `reconcileNotes`
 
-The desktop's `reconcileNotes` builds a keep-set from every note in memory and then deletes any
-`.md` in `notes/` not in it — plus any *directory* that is not a notebook folder, recursively
-(localStore.js:194-206). That is correct there: its in-memory db is the whole truth and it syncs
-the entire tree on every flush.
+The desktop's `reconcileNotes` builds a keep-set from every note in memory and prunes what is not
+in it. Until 2026-10-24 it pruned *every* `.md` and folder it did not hold in memory, so a note
+this crate created while the desktop was open vanished on the desktop's next save. It now prunes
+only files it read or wrote itself (renamed, moved or deleted in the app); a file it has not seen
+is news, and its watcher adopts it. It also re-reads and three-way merges any file that changed
+on disk before overwriting it, and holds `.siddran-lock` for the length of a save — so the two
+apps can be open on one Bag at the same time.
 
 **This crate deliberately does not port it.** A CLI mutates one thing and exits, so a global
 keep-set buys nothing and risks everything: any bug in it silently deletes notes, and it would
@@ -90,9 +93,8 @@ also delete anything a user or another tool had placed in `notes/` that we faile
 Targeted operations — write this file, remove that one — reach the same end state and **cannot
 mass-delete by construction**.
 
-What is given up: orphans left behind by a desktop crash are not cleaned. `siddran bag check`
-reports them instead, and the desktop reconciles them itself next time it runs. That is the
-right trade for a tool that is not the primary editor.
+What is given up: orphans left behind by a desktop crash are not cleaned here. `siddran bag
+check` reports them instead. That is the right trade for a tool that is not the primary editor.
 
 The collision rule is still honoured: the first note to claim `<title>.md` keeps it, a later one
 with the same title becomes `<title>-<id>.md`, and "already claimed" means *by a different note*
