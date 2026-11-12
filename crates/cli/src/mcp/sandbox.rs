@@ -26,7 +26,7 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
 pub fn definitions() -> Vec<Value> {
     vec![
         tool("sandboxes_list", "List the user's sandboxes (whiteboards).", json!({}), &[]),
-        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
+        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
             "sandbox": { "type": "string", "description": "Board id or title" },
         }), &["sandbox"]),
         tool("sandbox_create", "Create an empty board.", json!({ "title": { "type": "string" } }), &["title"]),
@@ -156,6 +156,9 @@ fn list(root: &Path) -> R {
 
 /// What `other` calls a kind of item.
 fn other_name(it: &Value) -> String {
+    if diagram::is_format(it) {
+        return "formats".into();
+    }
     match it["type"].as_str().unwrap_or("") {
         "stroke" => "handwriting strokes".into(),
         "shape" => "lines".into(),
@@ -223,6 +226,22 @@ fn read(root: &Path, a: &Value) -> R {
             fr[list].as_array_mut().unwrap().push(entry);
         }
     }
+    // Format widgets (Siddran-Desktop formats/formats.js): their own records
+    // are in the payload; a linked one only names its filter.
+    let formats: Vec<Value> = b
+        .items
+        .iter()
+        .filter(|i| diagram::is_format(i))
+        .map(|f| {
+            let p = &f["payload"];
+            let mut o = json!({ "id": f["id"], "title": p["title"].as_str().unwrap_or("Table"), "view": p["view"].as_str().unwrap_or("table"), "source": p["source"].get("type").map_or(json!({ "type": "own" }), |_| p["source"].clone()) });
+            if !matches!(p["source"]["type"].as_str(), Some("tasks" | "project")) {
+                o["fields"] = json!(p["fields"].as_array().map(|fs| fs.iter().map(|x| x["name"].clone()).collect::<Vec<_>>()).unwrap_or_default());
+                o["records"] = json!(p["records"].as_array().map(|rs| rs.iter().map(|r| json!({ "id": r["id"], "values": r["values"] })).collect::<Vec<_>>()).unwrap_or_default());
+            }
+            o
+        })
+        .collect();
     let shape_of = |id: &str| b.items.iter().find(|i| i["id"] == id).and_then(|i| i["payload"]["kind"].as_str()).unwrap_or("rect").to_owned();
     Ok(json!({
         "id": b.id(), "title": b.title(),
@@ -230,6 +249,7 @@ fn read(root: &Path, a: &Value) -> R {
         "box_ids": keys.iter().map(|(k, id)| json!({ "key": k, "id": id, "shape": shape_of(id) })).collect::<Vec<_>>(),
         "sticky_notes": stickies,
         "frames": inside,
+        "formats": formats,
         "text_items": texts,
         "other": counts,
     }))
@@ -341,7 +361,7 @@ fn find_box(items: &[Value], what: &str) -> Result<String, String> {
         |i| i["id"].as_str().unwrap_or("").to_owned(),
         |i| {
             let p = &i["payload"];
-            if diagram::is_frame(i) { p["title"].as_str() } else { p["text"].as_str() }.unwrap_or("").replace('\n', " ")
+            if diagram::is_frame(i) || diagram::is_format(i) { p["title"].as_str() } else { p["text"].as_str() }.unwrap_or("").replace('\n', " ")
         },
     )?;
     Ok(hit["id"].as_str().unwrap_or("").to_owned())
@@ -552,6 +572,18 @@ fn edit(root: &Path, a: &Value) -> R {
             if is_frame && u.get("shape").is_some() {
                 return Err(format!("{what:?} is a frame; a frame can't change shape"));
             }
+            // A Format widget: only its title changes here; its records stay as they are.
+            if diagram::is_format(it) {
+                if u.get("shape").is_some() || u.get("fill").is_some() {
+                    return Err(format!("{what:?} is a widget (a table of records); only its title can change"));
+                }
+                if let Some(t) = u["text"].as_str() {
+                    it["payload"]["title"] = json!(t);
+                }
+                it["updated_at"] = json!(now);
+                updated += 1;
+                continue;
+            }
             if let Some(t) = u["text"].as_str() {
                 let kind = it["payload"]["kind"].as_str().unwrap_or("rect").to_owned();
                 if is_frame {
@@ -739,6 +771,37 @@ mod tests {
 
         let e = draw(t.path(), &json!({ "sandbox": id, "text": "A --> B", "shapes": { "Z": "rect" } })).unwrap_err();
         assert!(e.contains("\"Z\""), "{e}");
+    }
+
+    #[test]
+    fn read_lists_format_widgets_and_an_edit_keeps_their_records() {
+        let mut own = shape("W", "format", 0, 300, 420, 320);
+        own["payload"] = json!({ "kind": "format", "view": "table", "title": "Reading list", "source": { "type": "own" },
+            "fields": [{ "id": "title", "name": "Title", "type": "text" }, { "id": "status", "name": "Status", "type": "select", "options": ["To do", "Done"] }],
+            "records": [{ "id": "r1", "values": { "title": "Dune", "status": "Done" }, "updated_at": "2026-11-13T00:00:00.000Z" }] });
+        let mut linked = shape("L", "format", 600, 300, 420, 320);
+        linked["payload"] = json!({ "kind": "format", "view": "kanban", "title": "Sprint", "source": { "type": "tasks", "show": "open" }, "fields": [], "records": [] });
+        let mut fr = shape("F", "frame", -100, 200, 600, 600);
+        fr["payload"] = json!({ "kind": "frame", "title": "Area" });
+        let (t, id) = bag(json!([fr, shape("A", "rect", 0, 0, 120, 56), own.clone(), linked]));
+        let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
+        assert_eq!(r["flowchart"], "flowchart TD\n  n1[A]\n", "widgets are not boxes");
+        assert_eq!(r["formats"], json!([
+            { "id": "W", "title": "Reading list", "view": "table", "source": { "type": "own" }, "fields": ["Title", "Status"],
+              "records": [{ "id": "r1", "values": { "title": "Dune", "status": "Done" } }] },
+            { "id": "L", "title": "Sprint", "view": "kanban", "source": { "type": "tasks", "show": "open" } },
+        ]));
+        assert_eq!(r["frames"][0]["other"], json!({ "formats": 1 }));
+
+        // An edit elsewhere, and a rename of the widget, leave its records byte for byte.
+        edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "A", "text": "Renamed" }, { "box": "Reading list", "text": "Books" }], "add": [{ "text": "X" }] })).unwrap();
+        let all = items(t.path(), &id);
+        let w = &by_id(&all, "W")["payload"];
+        assert_eq!(w["title"], "Books");
+        assert_eq!((w["records"].clone(), w["fields"].clone()), (own["payload"]["records"].clone(), own["payload"]["fields"].clone()));
+        assert_eq!((by_id(&all, "W")["w"].clone(), by_id(&all, "W")["h"].clone()), (json!(420), json!(320)), "not resized like a box");
+        let e = edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "W", "shape": "rect" }] })).unwrap_err();
+        assert!(e.contains("widget"), "{e}");
     }
 
     #[test]
