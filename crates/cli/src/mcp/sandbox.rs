@@ -26,7 +26,7 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
 pub fn definitions() -> Vec<Value> {
     vec![
         tool("sandboxes_list", "List the user's sandboxes (whiteboards).", json!({}), &[]),
-        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
+        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
             "sandbox": { "type": "string", "description": "Board id or title" },
         }), &["sandbox"]),
         tool("sandbox_create", "Create an empty board.", json!({ "title": { "type": "string" } }), &["title"]),
@@ -245,10 +245,12 @@ fn read(root: &Path, a: &Value) -> R {
             let mut o = json!({ "id": f["id"], "title": p["title"].as_str().unwrap_or("Table"), "view": p["view"].as_str().unwrap_or("table"), "source": p["source"].get("type").map_or(json!({ "type": "own" }), |_| p["source"].clone()) });
             if !matches!(p["source"]["type"].as_str(), Some("tasks" | "project")) {
                 // Values are keyed by field id; each field says its name, type (text, long, number,
-                // select, multi, date, check, url, email) and, for select/multi, its options.
+                // select, multi, date, check, url, email, files, formula) and, for select/multi, its
+                // options. A formula's values aren't stored (the app computes them): its `expr` is given.
                 o["fields"] = json!(p["fields"].as_array().map(|fs| fs.iter().map(|x| {
                     let mut f = json!({ "id": x["id"], "name": x["name"], "type": x["type"].as_str().unwrap_or("text") });
                     if x["options"].is_array() { f["options"] = x["options"].clone() }
+                    if x["expr"].is_string() { f["expr"] = x["expr"].clone() }
                     f
                 }).collect::<Vec<_>>()).unwrap_or_default());
                 o["records"] = json!(p["records"].as_array().map(|rs| rs.iter().map(|r| json!({ "id": r["id"], "values": r["values"] })).collect::<Vec<_>>()).unwrap_or_default());
@@ -807,7 +809,7 @@ mod tests {
     fn read_lists_format_widgets_and_an_edit_keeps_their_records() {
         let mut own = shape("W", "format", 0, 300, 420, 320);
         own["payload"] = json!({ "kind": "format", "view": "table", "title": "Reading list", "source": { "type": "own" },
-            "fields": [{ "id": "title", "name": "Title", "type": "text" }, { "id": "status", "name": "Status", "type": "select", "options": ["To do", "Done"] }],
+            "fields": [{ "id": "title", "name": "Title", "type": "text" }, { "id": "status", "name": "Status", "type": "select", "options": ["To do", "Done"] }, { "id": "fx", "name": "Twice", "type": "formula", "expr": "{Pages} * 2" }],
             "records": [{ "id": "r1", "values": { "title": "Dune", "status": "Done" }, "updated_at": "2026-11-13T00:00:00.000Z" }] });
         let mut linked = shape("L", "format", 600, 300, 420, 320);
         linked["payload"] = json!({ "kind": "format", "view": "kanban", "title": "Sprint", "source": { "type": "tasks", "show": "open" }, "fields": [], "records": [] });
@@ -818,7 +820,7 @@ mod tests {
         assert_eq!(r["flowchart"], "flowchart TD\n  n1[A]\n", "widgets are not boxes");
         assert_eq!(r["formats"], json!([
             { "id": "W", "title": "Reading list", "view": "table", "source": { "type": "own" },
-              "fields": [{ "id": "title", "name": "Title", "type": "text" }, { "id": "status", "name": "Status", "type": "select", "options": ["To do", "Done"] }],
+              "fields": [{ "id": "title", "name": "Title", "type": "text" }, { "id": "status", "name": "Status", "type": "select", "options": ["To do", "Done"] }, { "id": "fx", "name": "Twice", "type": "formula", "expr": "{Pages} * 2" }],
               "records": [{ "id": "r1", "values": { "title": "Dune", "status": "Done" } }] },
             { "id": "L", "title": "Sprint", "view": "kanban", "source": { "type": "tasks", "show": "open" } },
         ]));
