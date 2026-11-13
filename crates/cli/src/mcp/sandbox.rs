@@ -26,7 +26,7 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
 pub fn definitions() -> Vec<Value> {
     vec![
         tool("sandboxes_list", "List the user's sandboxes (whiteboards).", json!({}), &[]),
-        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban, Matrix or Timeline's `layout` names the fields that lay it out (select fields for columns/lanes/rows, date fields for a Timeline's start and end), the Matrix's named cells and the Timeline's dependency `links` — `to` waits for `from`) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
+        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban, Matrix or Timeline's `layout` names the fields that lay it out (select fields for columns/lanes/rows, date fields for a Timeline's start and end), the Matrix's named cells and the Timeline's dependency `links` — `to` waits for `from`) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). A `doc` widget is a page of Markdown instead: its `text` is given, or, when its source is a note (`noteId`), read the note with the note tools. Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
             "sandbox": { "type": "string", "description": "Board id or title" },
         }), &["sandbox"]),
         tool("sandbox_create", "Create an empty board.", json!({ "title": { "type": "string" } }), &["title"]),
@@ -58,7 +58,8 @@ pub fn definitions() -> Vec<Value> {
             }, "required": ["from", "to"] } },
             "update": { "type": "array", "items": { "type": "object", "properties": {
                 "box": { "type": "string", "description": "Box (id or text), frame (id or title) or arrow (id)" },
-                "text": { "type": "string", "description": "A box's text, a frame's title, an arrow's label" },
+                "text": { "type": "string", "description": "A box's text, a frame's title, a widget's title, an arrow's label" },
+                "body": { "type": "string", "description": "A Doc widget's whole text (Markdown). Only for a Doc kept in the board; a Doc showing a note is edited through the note." },
                 "shape": { "type": "string", "enum": diagram::BOX_KINDS }, "fill": { "type": "string", "description": "#rrggbb or transparent" },
                 "routing": link_props()["properties"]["routing"], "head": link_props()["properties"]["head"],
                 "headStart": link_props()["properties"]["headStart"], "lineStyle": link_props()["properties"]["lineStyle"],
@@ -273,6 +274,14 @@ fn read(root: &Path, a: &Value) -> R {
         .map(|f| {
             let p = &f["payload"];
             let mut o = json!({ "id": f["id"], "title": p["title"].as_str().unwrap_or("Table"), "view": p["view"].as_str().unwrap_or("table"), "source": p["source"].get("type").map_or(json!({ "type": "own" }), |_| p["source"].clone()) });
+            // A Doc (formats/doc/doc.js) is a page of Markdown, not records.
+            if p["view"] == "doc" {
+                o["title"] = json!(p["title"].as_str().unwrap_or("Doc"));
+                if p["source"]["type"] != "note" {
+                    o["text"] = json!(p["body"].as_str().unwrap_or(""));
+                }
+                return o;
+            }
             if !matches!(p["source"]["type"].as_str(), Some("tasks" | "project")) {
                 // Values are keyed by field id; each field says its name, type (text, long, number,
                 // select, multi, date, check, url, email, files, formula) and, for select/multi, its
@@ -623,7 +632,16 @@ fn edit(root: &Path, a: &Value) -> R {
             // A Format widget: only its title changes here; its records stay as they are.
             if diagram::is_format(it) {
                 if u.get("shape").is_some() || u.get("fill").is_some() {
-                    return Err(format!("{what:?} is a widget (a table of records); only its title can change"));
+                    return Err(format!("{what:?} is a widget (a table of records or a Doc); only its title (or a Doc's body) can change"));
+                }
+                if let Some(body) = u["body"].as_str() {
+                    if it["payload"]["view"] != "doc" {
+                        return Err(format!("{what:?} is not a Doc; `body` is only for Docs"));
+                    }
+                    if it["payload"]["source"]["type"] == "note" {
+                        return Err(format!("{what:?} shows a note; edit the note itself"));
+                    }
+                    it["payload"]["body"] = json!(body);
                 }
                 if let Some(t) = u["text"].as_str() {
                     it["payload"]["title"] = json!(t);
@@ -877,6 +895,24 @@ mod tests {
         assert_eq!((by_id(&all, "W")["w"].clone(), by_id(&all, "W")["h"].clone()), (json!(420), json!(320)), "not resized like a box");
         let e = edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "W", "shape": "rect" }] })).unwrap_err();
         assert!(e.contains("widget"), "{e}");
+    }
+
+    #[test]
+    fn a_doc_reads_as_text_and_its_body_can_be_replaced() {
+        let mut own = shape("D", "format", 0, 300, 560, 640);
+        own["payload"] = json!({ "kind": "format", "view": "doc", "title": "Brief", "source": { "type": "own" }, "body": "# Goal\n\nShip it." });
+        let mut linked = shape("N", "format", 700, 300, 560, 640);
+        linked["payload"] = json!({ "kind": "format", "view": "doc", "title": "Notes", "source": { "type": "note", "noteId": "abc" }, "body": "" });
+        let (t, id) = bag(json!([own, linked]));
+        let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
+        assert_eq!(r["formats"], json!([
+            { "id": "D", "title": "Brief", "view": "doc", "source": { "type": "own" }, "text": "# Goal\n\nShip it." },
+            { "id": "N", "title": "Notes", "view": "doc", "source": { "type": "note", "noteId": "abc" } },
+        ]));
+        edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "Brief", "body": "# Goal\n\nShipped." }] })).unwrap();
+        assert_eq!(by_id(&items(t.path(), &id), "D")["payload"]["body"], "# Goal\n\nShipped.");
+        let e = edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "N", "body": "x" }] })).unwrap_err();
+        assert!(e.contains("note"), "{e}");
     }
 
     #[test]
