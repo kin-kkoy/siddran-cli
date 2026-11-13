@@ -26,7 +26,7 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
 pub fn definitions() -> Vec<Value> {
     vec![
         tool("sandboxes_list", "List the user's sandboxes (whiteboards).", json!({}), &[]),
-        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban, Matrix or Timeline's `layout` names the fields that lay it out (select fields for columns/lanes/rows, date fields for a Timeline's start and end), the Matrix's named cells and the Timeline's dependency `links` — `to` waits for `from`) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
+        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban, Matrix or Timeline's `layout` names the fields that lay it out (select fields for columns/lanes/rows, date fields for a Timeline's start and end), the Matrix's named cells and the Timeline's dependency `links` — `to` waits for `from`) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted. `slides` are the board's slide deck (frames made as slides) in presentation order: each slide's number (null when hidden from the presentation), title, size and what lies on it, like a frame; they are not repeated under `frames`.", json!({
             "sandbox": { "type": "string", "description": "Board id or title" },
         }), &["sandbox"]),
         tool("sandbox_create", "Create an empty board.", json!({ "title": { "type": "string" } }), &["title"]),
@@ -38,7 +38,7 @@ pub fn definitions() -> Vec<Value> {
             "shapes": { "type": "object", "additionalProperties": { "type": "string", "enum": diagram::BOX_KINDS }, "description": "Node key → shape kind, e.g. {\"D\": \"document\", \"S\": \"sticky\"}" },
             "links": link_props(),
         }), &["text"]),
-        tool("sandbox_edit", "Change a board without coordinates. `add` boxes, sticky notes or frames (a box optionally `after` an existing box, which places it below and draws the arrow; a frame `around` boxes), `connect` boxes, `update` a box's text, shape or fill, a frame's title, or an arrow's label and style, `remove` things. Refer to boxes by id or by their text, frames by id or title, arrows by id.", json!({
+        tool("sandbox_edit", "Change a board without coordinates. `add` boxes, sticky notes or frames (a box optionally `after` an existing box, which places it below and draws the arrow; a frame `around` boxes), `connect` boxes, `update` a box's text, shape or fill, a frame's title, or an arrow's label and style, `remove` things. Refer to boxes by id or by their text, frames by id or title, arrows by id. Slides: `add` with shape `slide` appends one to the deck (sized like the last slide, else 1920×1080, placed to its right; `text` is its title, default \"Slide n\"); `update` a slide's title (`text`), `hidden` (left out of the presentation) or `order` (its 1-based place in the deck).", json!({
             "sandbox": { "type": "string" },
             "add": { "type": "array", "items": { "type": "object", "properties": {
                 "text": { "type": "string", "description": "The box's text; a frame's title" },
@@ -62,6 +62,8 @@ pub fn definitions() -> Vec<Value> {
                 "shape": { "type": "string", "enum": diagram::BOX_KINDS }, "fill": { "type": "string", "description": "#rrggbb or transparent" },
                 "routing": link_props()["properties"]["routing"], "head": link_props()["properties"]["head"],
                 "headStart": link_props()["properties"]["headStart"], "lineStyle": link_props()["properties"]["lineStyle"],
+                "hidden": { "type": "boolean", "description": "Slides only: leave it out of the presentation" },
+                "order": { "type": "integer", "minimum": 1, "description": "Slides only: its place in the deck (1 = first)" },
             }, "required": ["box"] } },
             "remove": { "type": "array", "items": { "type": "string" }, "description": "Boxes (id or text) or connector ids. A box's arrows go with it." },
         }), &["sandbox"]),
@@ -70,7 +72,7 @@ pub fn definitions() -> Vec<Value> {
 
 fn add_kinds() -> Vec<&'static str> {
     let mut k = diagram::BOX_KINDS.to_vec();
-    k.extend([diagram::FRAME_KIND, "text"]);
+    k.extend([diagram::FRAME_KIND, "text", SLIDE]);
     k
 }
 
@@ -291,12 +293,36 @@ fn read(root: &Path, a: &Value) -> R {
         })
         .collect();
     let shape_of = |id: &str| b.items.iter().find(|i| i["id"] == id).and_then(|i| i["payload"]["kind"].as_str()).unwrap_or("rect").to_owned();
+    // Slides (Siddran-Desktop slides/slides.js): frames with `payload.slide`, listed
+    // apart in deck order, numbered as presented (hidden ones get no number).
+    let entry_of = |id: &Value| frames.iter().position(|f| f["id"] == *id).map(|i| inside[i].clone());
+    let mut n = 0;
+    let slides: Vec<Value> = deck_order(&b.items)
+        .into_iter()
+        .filter_map(|sl| {
+            let mut e = entry_of(&sl["id"])?;
+            let hidden = sl["payload"]["slideHidden"] == true;
+            if !hidden {
+                n += 1;
+            }
+            let o = e.as_object_mut()?;
+            o.insert("number".into(), if hidden { Value::Null } else { json!(n) });
+            o.insert("hidden".into(), json!(hidden));
+            o.insert("size".into(), json!([sl["w"].as_f64().unwrap_or(0.0).round() as i64, sl["h"].as_f64().unwrap_or(0.0).round() as i64]));
+            if o.get("title").and_then(Value::as_str) == Some("Frame") && sl["payload"]["title"].is_null() {
+                o.insert("title".into(), json!("Slide"));
+            }
+            Some(e)
+        })
+        .collect();
+    let plain_frames: Vec<Value> = inside.iter().zip(&frames).filter(|(_, f)| !is_slide(f)).map(|(e, _)| e.clone()).collect();
     Ok(json!({
         "id": b.id(), "title": b.title(),
         "flowchart": flow,
         "box_ids": keys.iter().map(|(k, id)| json!({ "key": k, "id": id, "shape": shape_of(id) })).collect::<Vec<_>>(),
         "sticky_notes": stickies,
-        "frames": inside,
+        "frames": plain_frames,
+        "slides": slides,
         "formats": formats,
         "text_items": texts,
         "other": counts,
@@ -511,6 +537,108 @@ fn frame(items: &[Value], id: &str, title: &str, spec: &Value, now: &str) -> Res
     }, "id": id, "type": "shape", "x": x, "y": y, "w": w, "h": h, "created_at": now, "updated_at": now }))
 }
 
+/// A slide is a frame with `payload.slide: true` (Siddran-Desktop slides/slides.js).
+const SLIDE: &str = "slide";
+
+fn is_slide(it: &Value) -> bool {
+    diagram::is_frame(it) && it["payload"]["slide"] == true
+}
+
+/// The deck, as slides.js `deckOrder`: slides with a `slideOrder` first (ties in
+/// reading order), then the rest in reading order — rows top to bottom (a slide
+/// whose top is above the row's first top + half its height shares the row),
+/// each left to right.
+fn reading_order(mut v: Vec<&Value>) -> Vec<&Value> {
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap_or(0.0);
+    v.sort_by(|a, b| f(a, "y").total_cmp(&f(b, "y")).then(f(a, "x").total_cmp(&f(b, "x"))));
+    let mut rows: Vec<(f64, f64, Vec<&Value>)> = Vec::new();
+    for it in v {
+        match rows.last_mut() {
+            Some((top, h, r)) if f(it, "y") < *top + *h / 2.0 => r.push(it),
+            _ => rows.push((f(it, "y"), f(it, "h").max(1.0), vec![it])),
+        }
+    }
+    rows.into_iter()
+        .flat_map(|(_, _, mut r)| {
+            r.sort_by(|a, b| f(a, "x").total_cmp(&f(b, "x")).then(f(a, "y").total_cmp(&f(b, "y"))));
+            r
+        })
+        .collect()
+}
+
+fn deck_order(items: &[Value]) -> Vec<&Value> {
+    let reading = reading_order;
+    let slides: Vec<&Value> = items.iter().filter(|i| is_slide(i)).collect();
+    let rank: std::collections::HashMap<&str, usize> = reading(slides.clone()).iter().enumerate().map(|(i, s)| (s["id"].as_str().unwrap_or(""), i)).collect();
+    let ord = |s: &Value| s["payload"]["slideOrder"].as_f64().filter(|n| n.is_finite());
+    let mut ordered: Vec<&Value> = slides.iter().copied().filter(|s| ord(s).is_some()).collect();
+    ordered.sort_by(|a, b| ord(a).unwrap().total_cmp(&ord(b).unwrap()).then(rank[a["id"].as_str().unwrap_or("")].cmp(&rank[b["id"].as_str().unwrap_or("")])));
+    let rest = reading(slides.into_iter().filter(|s| ord(s).is_none()).collect());
+    ordered.into_iter().chain(rest).collect()
+}
+
+/// Move slide `id` to deck place `to` (0-based), numbering every slide 1…n (slides.js `reorderPatches`).
+fn reorder_slide(items: &mut [Value], id: &str, to: usize, now: &str) {
+    let mut deck: Vec<String> = deck_order(items).iter().map(|s| s["id"].as_str().unwrap_or("").to_owned()).collect();
+    let Some(from) = deck.iter().position(|d| d == id) else { return };
+    let moved = deck.remove(from);
+    deck.insert(to.min(deck.len()), moved);
+    for (i, sid) in deck.iter().enumerate() {
+        if let Some(it) = items.iter_mut().find(|x| x["id"] == sid.as_str()) {
+            if it["payload"]["slideOrder"].as_u64() != Some(i as u64 + 1) {
+                it["payload"]["slideOrder"] = json!(i + 1);
+                it["updated_at"] = json!(now);
+            }
+        }
+    }
+}
+
+/// A new slide at the end of the deck (slides.js `newSlideRect`/`slidePayload`):
+/// the last slide's size (else 1920×1080, or `w`/`h`), 120 to the right of it
+/// past any frame in the way, or beside the board for the first one.
+fn slide(items: &[Value], id: &str, title: &str, spec: &Value, now: &str) -> Value {
+    const GAP: i64 = 120;
+    let deck = deck_order(items);
+    let last = deck.last();
+    let g = |v: &Value, k: &str| v[k].as_f64().unwrap_or(0.0).round() as i64;
+    let (dw, dh) = last.map_or((1920, 1080), |l| (g(l, "w"), g(l, "h")));
+    let w = spec["w"].as_f64().map_or(dw, |v| v.round() as i64).max(40);
+    let h = spec["h"].as_f64().map_or(dh, |v| v.round() as i64).max(40);
+    let (x, y) = match (spec["x"].as_f64(), spec["y"].as_f64(), last) {
+        (Some(x), Some(y), _) => (x.round() as i64, y.round() as i64),
+        (_, _, Some(l)) => {
+            let mut x = g(l, "x") + g(l, "w") + GAP;
+            let y = g(l, "y");
+            let frames: Vec<(i64, i64, i64, i64)> = items.iter().filter(|i| diagram::is_frame(i)).map(rect).collect();
+            for _ in 0..500 {
+                match frames.iter().find(|r| x < r.0 + r.2 && x + w > r.0 && y < r.1 + r.3 && y + h > r.1) {
+                    Some(r) => x = r.0 + r.2 + GAP,
+                    None => break,
+                }
+            }
+            (x, y)
+        }
+        _ => {
+            let bounds = items.iter().filter(|i| i["type"] != "connector").map(rect).reduce(|a, b| {
+                let (x0, y0, x1, y1) = (a.0.min(b.0), a.1.min(b.1), (a.0 + a.2).max(b.0 + b.2), (a.1 + a.3).max(b.1 + b.3));
+                (x0, y0, x1 - x0, y1 - y0)
+            });
+            bounds.map_or((0, 0), |(bx, by, bw, _)| (bx + bw + 160, by))
+        }
+    };
+    let n = items
+        .iter()
+        .filter(|i| is_slide(i))
+        .filter_map(|i| i["payload"]["title"].as_str()?.strip_prefix("Slide ")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    let title = if title.trim().is_empty() { format!("Slide {}", n + 1) } else { title.to_owned() };
+    let z = items.iter().filter_map(|i| i["z_index"].as_i64()).min().unwrap_or(0).min(0) - 1;
+    json!({ "rotation": 0, "z_index": z, "payload": {
+        "kind": diagram::FRAME_KIND, "title": title, "fill": "rgba(128,128,150,0.10)", "stroke": "rgba(160,160,190,0.35)", "strokeWidth": 1, "slide": true,
+    }, "id": id, "type": "shape", "x": x, "y": y, "w": w, "h": h, "created_at": now, "updated_at": now })
+}
+
 fn edit(root: &Path, a: &Value) -> R {
     let what = need(a, "sandbox")?;
     let style = Style::default();
@@ -528,6 +656,12 @@ fn edit(root: &Path, a: &Value) -> R {
             if kind == diagram::FRAME_KIND {
                 added.push(json!({ "id": id, "text": text }));
                 b.items.push(frame(&b.items, &id, &text, spec, &now)?);
+                continue;
+            }
+            if kind == SLIDE {
+                let sl = slide(&b.items, &id, &text, spec, &now);
+                added.push(json!({ "id": id, "text": sl["payload"]["title"] }));
+                b.items.push(sl);
                 continue;
             }
             let item = if kind == "text" {
@@ -615,6 +749,25 @@ fn edit(root: &Path, a: &Value) -> R {
                 continue;
             }
             let id = find_box(&b.items, what)?;
+            if u.get("hidden").is_some() || u.get("order").is_some() {
+                let it = b.items.iter().find(|i| i["id"] == id.as_str()).unwrap();
+                if !is_slide(it) {
+                    return Err(format!("{what:?} isn't a slide; `hidden` and `order` are for slides"));
+                }
+                if let Some(o) = u["order"].as_u64() {
+                    reorder_slide(&mut b.items, &id, o.max(1) as usize - 1, &now);
+                }
+                let it = b.items.iter_mut().find(|i| i["id"] == id.as_str()).unwrap();
+                match u["hidden"].as_bool() {
+                    Some(true) => it["payload"]["slideHidden"] = json!(true),
+                    Some(false) => {
+                        if let Some(o) = it["payload"].as_object_mut() {
+                            o.remove("slideHidden");
+                        }
+                    }
+                    None => {}
+                }
+            }
             let it = b.items.iter_mut().find(|i| i["id"] == id.as_str()).unwrap();
             let is_frame = diagram::is_frame(it);
             if is_frame && u.get("shape").is_some() {
@@ -893,5 +1046,51 @@ mod tests {
         let p = &by_id(&all, "C")["payload"];
         assert_eq!((p["avoid"].clone(), p["body"].clone(), p["bend"].clone()), (json!(true), json!("tapered"), json!({ "x": 3, "y": 4 })));
         assert_eq!(p["label"], "go");
+    }
+
+    #[test]
+    fn slides_read_as_a_deck_apart_from_frames() {
+        let fr = |id: &str, x: i64, extra: Value| {
+            let mut f = shape(id, "frame", x, 0, 400, 225);
+            f["payload"]["title"] = json!(id);
+            for (k, v) in extra.as_object().unwrap() { f["payload"][k] = v.clone(); }
+            f
+        };
+        let (t, id) = bag(json!([
+            fr("Plain", 0, json!({})),
+            fr("Second", 1000, json!({ "slide": true, "slideOrder": 2 })),
+            fr("First", 2000, json!({ "slide": true, "slideOrder": 1 })),
+            fr("Hidden", 3000, json!({ "slide": true, "slideHidden": true })),
+            shape("n1", "rect", 2100, 50, 100, 50),
+        ]));
+        let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
+        assert_eq!(r["frames"].as_array().unwrap().len(), 1);
+        assert_eq!(r["frames"][0]["title"], "Plain");
+        let s = &r["slides"];
+        assert_eq!(s.as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect::<Vec<_>>(), ["First", "Second", "Hidden"]);
+        assert_eq!(s[0]["number"], 1);
+        assert_eq!(s[0]["boxes"], json!(["n1"]));
+        assert_eq!(s[0]["size"], json!([400, 225]));
+        assert_eq!(s[2]["number"], Value::Null);
+        assert_eq!(s[2]["hidden"], true);
+    }
+
+    #[test]
+    fn edit_adds_hides_and_reorders_slides() {
+        let (t, id) = bag(json!([]));
+        edit(t.path(), &json!({ "sandbox": id, "add": [{ "text": "", "shape": "slide" }, { "text": "Plan", "shape": "slide" }] })).unwrap();
+        let its = items(t.path(), &id);
+        assert_eq!(its.len(), 2);
+        assert_eq!((its[0]["w"].as_i64(), its[0]["h"].as_i64()), (Some(1920), Some(1080)));
+        assert_eq!(its[0]["payload"]["title"], "Slide 1");
+        assert_eq!(its[0]["payload"]["slide"], true);
+        assert_eq!(its[1]["x"].as_i64().unwrap(), its[0]["x"].as_i64().unwrap() + 1920 + 120);
+        edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "Plan", "order": 1 }, { "box": "Slide 1", "hidden": true }] })).unwrap();
+        let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
+        assert_eq!(r["slides"][0]["title"], "Plan");
+        assert_eq!(r["slides"][1]["hidden"], true);
+        assert!(edit(t.path(), &json!({ "sandbox": id, "add": [{ "text": "Box" }], "update": [{ "box": "Box", "hidden": true }] })).is_err());
+        edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "Slide 1", "hidden": false }] })).unwrap();
+        assert!(items(t.path(), &id).iter().all(|i| i["payload"].get("slideHidden").is_none()));
     }
 }
