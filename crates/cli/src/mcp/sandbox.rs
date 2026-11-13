@@ -26,7 +26,7 @@ fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value
 pub fn definitions() -> Vec<Value> {
     vec![
         tool("sandboxes_list", "List the user's sandboxes (whiteboards).", json!({}), &[]),
-        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban or Matrix's `layout` names the select fields that make its columns/lanes or rows/columns, and the Matrix's named cells) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
+        tool("sandbox_read", "Read a board. Boxes and arrows come back as flowchart text (Mermaid-style); `box_ids` gives each key's id and real shape (the text only has a few bracket forms). Sticky notes are boxes too and are also listed under `sticky_notes`. `frames` are titled regions, each with what lies inside it (box keys, text ids, nested frame ids, counts of the rest). `formats` are widgets (Table, Kanban, Timeline, Matrix) holding records: their own (listed, each with its field values keyed by field id; `fields` gives each id's name, type and options; a formula field's values are computed by the app and not stored — its `expr` is listed; a Kanban, Matrix or Timeline's `layout` names the fields that lay it out (select fields for columns/lanes/rows, date fields for a Timeline's start and end), the Matrix's named cells and the Timeline's dependency `links` — `to` waits for `from`) or linked to the Bag's tasks (the filter is given; read the tasks themselves with the task tools). Other things (free text, note/task cards, handwriting, lines, PDFs) are listed or counted.", json!({
             "sandbox": { "type": "string", "description": "Board id or title" },
         }), &["sandbox"]),
         tool("sandbox_create", "Create an empty board.", json!({ "title": { "type": "string" } }), &["title"]),
@@ -192,9 +192,9 @@ fn frame_of<'a>(it: &Value, frames: &[&'a Value]) -> Option<&'a Value> {
         .copied()
 }
 
-/// How a Kanban or Matrix lays its records out — its view settings, only the keys that are set
+/// How a Kanban, Matrix or Timeline lays its records out — its view settings, only the keys that are set
 /// (absent: Kanban columns by Status or the first select field; Matrix rows and columns by the
-/// first two). Matrix cells can be named ("Quick wins"); the names are listed per row × column option.
+/// first two; Timeline from a date field named Start, else the first, to one named End/Finish/Due). Matrix cells can be named ("Quick wins"); the names are listed per row × column option.
 fn card_layout(p: &Value) -> Value {
     let mut l = json!({});
     let mut put = |k: &str, v: &Value| if v.is_string() { l[k] = v.clone() };
@@ -209,6 +209,13 @@ fn card_layout(p: &Value) -> Value {
                 }))
                 .collect();
             if !names.is_empty() { l["cell_names"] = json!(names) }
+        }
+        Some("timeline") => {
+            put("starts_by", &p["timeline"]["startBy"]);
+            put("ends_by", &p["timeline"]["endBy"]);
+            put("lanes_by", &p["timeline"]["groupBy"]);
+            // Dependencies: `to` waits for `from` (record ids).
+            if let Some(ls) = p["timeline"]["links"].as_array().filter(|a| !a.is_empty()) { l["links"] = json!(ls) }
         }
         _ => {}
     }
@@ -843,7 +850,10 @@ mod tests {
             "matrix": { "rowBy": "impact", "colBy": "effort", "cells": { "High": { "Low": { "label": "Quick wins", "hue": 140 }, "High": { "hue": 210 } } } } });
         let mut fr = shape("F", "frame", -100, 200, 600, 600);
         fr["payload"] = json!({ "kind": "frame", "title": "Area" });
-        let (t, id) = bag(json!([fr, shape("A", "rect", 0, 0, 120, 56), own.clone(), linked, matrix]));
+        let mut tl = shape("T", "format", 1900, 300, 860, 420);
+        tl["payload"] = json!({ "kind": "format", "view": "timeline", "title": "Plan", "source": { "type": "own" }, "fields": [], "records": [],
+            "timeline": { "endBy": "finish", "zoom": "month", "links": [{ "from": "r1", "to": "r2" }] } });
+        let (t, id) = bag(json!([fr, shape("A", "rect", 0, 0, 120, 56), own.clone(), linked, matrix, tl]));
         let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
         assert_eq!(r["flowchart"], "flowchart TD\n  n1[A]\n", "widgets are not boxes");
         assert_eq!(r["formats"], json!([
@@ -853,6 +863,8 @@ mod tests {
             { "id": "L", "title": "Sprint", "view": "kanban", "source": { "type": "tasks", "show": "open" }, "layout": { "columns_by": "priority" } },
             { "id": "M", "title": "Priorities", "view": "matrix", "source": { "type": "own" }, "fields": [], "records": [],
               "layout": { "rows_by": "impact", "columns_by": "effort", "cell_names": [{ "row": "High", "column": "Low", "name": "Quick wins" }] } },
+            { "id": "T", "title": "Plan", "view": "timeline", "source": { "type": "own" }, "fields": [], "records": [],
+              "layout": { "ends_by": "finish", "links": [{ "from": "r1", "to": "r2" }] } },
         ]));
         assert_eq!(r["frames"][0]["other"], json!({ "formats": 1 }));
 
