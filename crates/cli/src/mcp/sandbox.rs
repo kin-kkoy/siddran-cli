@@ -168,8 +168,8 @@ fn other_name(it: &Value) -> String {
 
 /// The frame an item sits in: the one it's attached to, else the smallest one holding its centre (the
 /// desktop's `frameChildren` rule — rotation turns about the centre, so the
-/// centre is just x + w/2, y + h/2). A frame sits in another only when it
-/// fits wholly inside it, so two overlapping frames never hold each other.
+/// centre is just x + w/2, y + h/2). A frame sits in another only when its
+/// centre is inside and it is the smaller, so two frames never hold each other.
 fn frame_of<'a>(it: &Value, frames: &[&'a Value]) -> Option<&'a Value> {
     // Attached to a frame (the desktop's sticky attachment, `payload.attachedTo`):
     // it belongs there wherever it hangs.
@@ -182,11 +182,12 @@ fn frame_of<'a>(it: &Value, frames: &[&'a Value]) -> Option<&'a Value> {
     let (x, y, w, h) = (f(it, "x"), f(it, "y"), f(it, "w"), f(it, "h"));
     let (cx, cy) = (x + w / 2.0, y + h / 2.0);
     let holds = |fr: &Value, px: f64, py: f64| px >= f(fr, "x") && px <= f(fr, "x") + f(fr, "w") && py >= f(fr, "y") && py <= f(fr, "y") + f(fr, "h");
-    let whole = diagram::is_frame(it);
+    // A frame sits in another only if it is the smaller of the two (desktop selection/attach.js).
+    let is_fr = diagram::is_frame(it);
     frames
         .iter()
         .filter(|fr| fr["id"] != it["id"])
-        .filter(|fr| if whole { holds(fr, x, y) && holds(fr, x + w, y + h) } else { holds(fr, cx, cy) })
+        .filter(|fr| holds(fr, cx, cy) && (!is_fr || w * h < f(fr, "w") * f(fr, "h")))
         .min_by(|a, b| (f(a, "w") * f(a, "h")).total_cmp(&(f(b, "w") * f(b, "h"))))
         .copied()
 }
