@@ -621,6 +621,7 @@ dependencies = [
  "serde_json",
  "siddran-core",
  "signal-hook",
+ "tempfile",
 ]
 
 [[package]]

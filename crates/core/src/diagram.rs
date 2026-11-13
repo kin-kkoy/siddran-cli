@@ -596,10 +596,53 @@ fn sides(dir: Dir, la: usize, lb: usize, ca: f64, cb: f64, back: bool) -> (&'sta
     (fwd_out, fwd_in)
 }
 
+// ── the board's vocabulary (Siddran-Desktop shapes/registry.js, connectors/) ──
+
+/// Every shape kind that is a box — something with text that arrows attach to.
+/// `sticky` is a sticky note. Frames and lines are shapes too, but not boxes.
+pub const BOX_KINDS: &[&str] = &[
+    // basic
+    "rect", "roundedRect", "ellipse", "circle", "triangle", "rhombus", "parallelogram", "trapezoid",
+    "pentagon", "hexagon", "octagon", "star", "blockArrow", "doubleArrow", "cross", "cloud", "cylinder", "document",
+    // flowchart
+    "terminator", "predefinedProcess", "manualInput", "manualOperation", "preparation", "delay", "display",
+    "storedData", "multiDocument", "offPageConnector", "merge", "card",
+    // callouts
+    "speechBubble", "roundedCallout", "thoughtBubble", "banner", "tag",
+    // a sticky note
+    "sticky",
+];
+/// Line shapes: drawn by their points, never part of a flowchart.
+pub const LINE_KINDS: &[&str] = &["line", "arrow", "elbowArrow", "divider", "taperedArrow"];
+pub const FRAME_KIND: &str = "frame";
+/// A Format widget (Table/Kanban/Timeline/Matrix): a window holding records,
+/// never a flowchart box (Siddran-Desktop formats/formats.js).
+pub const FORMAT_KIND: &str = "format";
+/// Connector `head` / `headStart` (connectors/heads.js HEAD_TYPES).
+pub const HEADS: &[&str] = &["none", "arrow", "open", "triangle", "circle", "diamond", "bar"];
+/// Connector `lineStyle` (connectors/lineStyle.js). The older `dash: true` means dashed.
+pub const LINE_STYLES: &[&str] = &["solid", "dashed", "dotted"];
+pub const ROUTINGS: &[&str] = &["straight", "elbow", "curved"];
+
+pub fn is_frame(it: &Value) -> bool {
+    it["type"] == "shape" && it["payload"]["kind"] == FRAME_KIND
+}
+
+pub fn is_format(it: &Value) -> bool {
+    it["type"] == "shape" && it["payload"]["kind"] == FORMAT_KIND
+}
+
+/// A shape that takes part in a flowchart: not a frame, a Format widget or a
+/// line (Siddran-Desktop flowText.js `isDiagramShape`).
+pub fn is_diagram_shape(it: &Value) -> bool {
+    it["type"] == "shape" && !is_frame(it) && !is_format(it) && !LINE_KINDS.contains(&it["payload"]["kind"].as_str().unwrap_or("rect"))
+}
+
 /// Read a diagram back as flowchart text — how an AI "sees" a board. Shapes
 /// get short keys (n1, n2…) in reading order; the map gives each key's real id.
+/// Frames and line shapes are left out (mirrored by flowText.js `itemsToFlow`).
 pub fn describe(items: &[Value]) -> (String, Vec<(String, String)>) {
-    let mut shapes: Vec<&Value> = items.iter().filter(|i| i["type"] == "shape").collect();
+    let mut shapes: Vec<&Value> = items.iter().filter(|i| is_diagram_shape(i)).collect();
     shapes.sort_by_key(|i| (i["y"].as_f64().unwrap_or(0.0) as i64 / 40, i["x"].as_f64().unwrap_or(0.0) as i64));
     let mut key_of: HashMap<String, String> = HashMap::new();
     let mut keys = Vec::new();
@@ -732,6 +775,19 @@ mod tests {
         assert_eq!(g2.edges.len(), 2);
         assert_eq!(keys.len(), 3);
         assert!(text.contains("|yes|"));
+    }
+
+    #[test]
+    fn describe_leaves_out_frames_formats_and_lines() {
+        let shape = |id: &str, kind: &str, x: i64, y: i64| json!({ "id": id, "type": "shape", "x": x, "y": y, "w": 120, "h": 56, "payload": { "kind": kind, "text": id } });
+        let mut frame = shape("F", "frame", -40, -40);
+        frame["payload"]["title"] = json!("Plan");
+        let mut widget = shape("W", "format", 0, 300);
+        widget["payload"] = json!({ "kind": "format", "view": "table", "title": "Table", "records": [] });
+        let items = vec![frame, shape("A", "rect", 0, 0), shape("L", "arrow", 0, 100), shape("S", "sticky", 200, 0), widget];
+        let (text, keys) = describe(&items);
+        assert_eq!(keys, vec![("n1".to_owned(), "A".to_owned()), ("n2".to_owned(), "S".to_owned())]);
+        assert_eq!(text, "flowchart TD\n  n1[A]\n  n2[S]\n");
     }
 }
 

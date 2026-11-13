@@ -284,8 +284,13 @@ dailies, projects, the calendar (agenda, events), sandboxes, and the desktop app
   (`A[Start] --> B{OK?}`, `B -->|yes| C`) and lays it out — on a board, or embedded in a note.
   `sandbox_read` gives a board back as the same text, so a model can "see" what is drawn, and
   `sandbox_edit` adds a box *after* another, connects boxes by their text, and finds free space
-  itself. The layout is `siddran-core::diagram`; the desktop's "Diagram from text" is a port of
-  it with mirrored tests.
+  itself. Every shape in the desktop's menu can be used (by name, where the text has no bracket
+  for it), and so can sticky notes and frames: a frame is drawn `around` boxes, and
+  `sandbox_read` lists each frame's title with what lies inside it. Arrows take the desktop's
+  routing (straight, elbow, curved), heads at either end and solid/dashed/dotted lines. The layout
+  is `siddran-core::diagram`; the desktop's "Diagram from text" is a port of it with mirrored
+  tests. (The desktop's node editor has extra layout of its own, such as families side by side and
+  lowered nodes. That is desktop-only; the CLI keeps those fields but doesn't lay them out.)
 - **The desktop's live channel.** `app_context` says what is on screen — the page, the open note,
   the text selected in it, the open board — so "tidy up the paragraph I selected" works without
   copying anything. `app_open` asks the window to show a note, board or page. Both go through two
@@ -324,8 +329,8 @@ $ siddran bag check
 ## What is deliberately not here
 
 - **The Sandbox canvas in the TUI.** Boards are not shown in the terminal. The AI tools do read
-  and write them (`sandbox_read`, `sandbox_diagram`, `sandbox_edit`): shapes, text and
-  connectors are understood; everything else on a board (handwriting, PDFs, cards) is carried
+  and write them (`sandbox_read`, `sandbox_diagram`, `sandbox_edit`): shapes, sticky notes, frames,
+  text and connectors are understood; everything else on a board (handwriting, PDFs, cards) is carried
   through untouched.
 - **Cloud sync.** The desktop's Cloudflare Worker covers tasks and calendar; this edits the same
   Bag, so it inherits sync without implementing any of it.
