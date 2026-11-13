@@ -166,11 +166,18 @@ fn other_name(it: &Value) -> String {
     }
 }
 
-/// The frame an item sits in: the smallest one holding its centre (the
+/// The frame an item sits in: the one it's attached to, else the smallest one holding its centre (the
 /// desktop's `frameChildren` rule — rotation turns about the centre, so the
 /// centre is just x + w/2, y + h/2). A frame sits in another only when it
 /// fits wholly inside it, so two overlapping frames never hold each other.
 fn frame_of<'a>(it: &Value, frames: &[&'a Value]) -> Option<&'a Value> {
+    // Attached to a frame (the desktop's sticky attachment, `payload.attachedTo`):
+    // it belongs there wherever it hangs.
+    if let Some(id) = it["payload"]["attachedTo"].as_str() {
+        if let Some(fr) = frames.iter().find(|fr| fr["id"] == id) {
+            return Some(*fr);
+        }
+    }
     let f = |v: &Value, k: &str| v[k].as_f64().unwrap_or(0.0);
     let (x, y, w, h) = (f(it, "x"), f(it, "y"), f(it, "w"), f(it, "h"));
     let (cx, cy) = (x + w / 2.0, y + h / 2.0);
@@ -680,6 +687,22 @@ mod tests {
             { "id": "F2", "title": "Done", "boxes": ["n2"], "text_items": [], "frames": [], "other": { "handwriting strokes": 1 } },
         ]));
         assert_eq!(r["other"], json!({ "handwriting strokes": 1, "lines": 1 }));
+    }
+
+    #[test]
+    fn read_puts_things_attached_to_a_frame_in_it_even_when_they_hang_outside() {
+        let mut fr = shape("F", "frame", 0, 0, 200, 200);
+        fr["payload"] = json!({ "kind": "frame", "title": "Small", "overflow": "clip" });
+        let mut hanging = shape("A", "rect", 500, 500, 120, 56);
+        hanging["payload"]["attachedTo"] = json!("F");
+        let (t, id) = bag(json!([fr, hanging, shape("B", "rect", 900, 900, 120, 56)]));
+        let r = read(t.path(), &json!({ "sandbox": id })).unwrap();
+        assert_eq!(r["frames"][0]["boxes"], json!(["n1"]));
+        // And an edit keeps the attachment and the crop setting.
+        edit(t.path(), &json!({ "sandbox": id, "update": [{ "box": "A", "text": "Renamed" }] })).unwrap();
+        let all = items(t.path(), &id);
+        assert_eq!(by_id(&all, "A")["payload"]["attachedTo"], "F");
+        assert_eq!(by_id(&all, "F")["payload"]["overflow"], "clip");
     }
 
     #[test]
